@@ -267,109 +267,98 @@ def preprocess_image(image_bytes, target_size=(IMAGE_SIZE, IMAGE_SIZE)):
 
 
 def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, model_name=None):
-    """Enhanced sensitivity heatmap visualization with improved anomaly visibility and reddish defect areas."""
+    """Enhanced heatmap visualization using EfficientAD style for all models with improved anomaly visibility."""
     
-    # Anomaly_map'in doğru işlendiğinden emin ol (önceki kodunuzdan alındı)
+    # Make sure anomaly_map is properly processed
     if not isinstance(anomaly_map, np.ndarray):
-        if hasattr(anomaly_map, 'cpu') and hasattr(anomaly_map, 'numpy'): # PyTorch tensor ise
+        if hasattr(anomaly_map, 'cpu') and hasattr(anomaly_map, 'numpy'): # PyTorch tensor
             anomaly_map = anomaly_map.squeeze().cpu().numpy()
-        else: # Beklenmedik bir tip ise, hata logla veya varsayılan bir harita oluştur
-            print(f"Uyarı: anomaly_map beklenmedik bir tipte: {type(anomaly_map)}. Sıfır haritası kullanılıyor.")
+        else: # Unexpected type
+            print(f"Warning: anomaly_map has unexpected type: {type(anomaly_map)}. Using zero map.")
             if hasattr(original_image, 'size'):
                 h, w = original_image.height, original_image.width
             else: # Fallback
                 h, w = 256, 256
-            anomaly_map = np.zeros((h // 4, w // 4)) # Küçük bir varsayılan harita
+            anomaly_map = np.zeros((h // 4, w // 4))
 
-    if anomaly_map.ndim == 0: # Skaler ise, 2D array yap
+    if anomaly_map.ndim == 0: # Scalar case
         anomaly_map = np.array([[anomaly_map]])
 
-
-    if len(anomaly_map.shape) > 2: # Çok kanallı ise
-        if anomaly_map.shape[0] == 1 or anomaly_map.shape[-1] == 1: # Tek kanala sıkıştırılabilirse
+    # Handle multi-channel maps
+    if len(anomaly_map.shape) > 2:
+        if anomaly_map.shape[0] == 1 or anomaly_map.shape[-1] == 1:
              anomaly_map = np.squeeze(anomaly_map)
-        elif anomaly_map.shape[0] == 3: # 3 kanallı ise ortalamasını al
+        elif anomaly_map.shape[0] == 3: # 3 channels case
             anomaly_map = np.mean(anomaly_map, axis=0)
-        else: # Diğer durumlar için maksimum projeksiyon
+        else: # Other cases
             anomaly_map = np.max(anomaly_map, axis=0)
     
-    # Harita çok küçükse veya geçersizse yeniden boyutlandır/düzelt
-    if anomaly_map.shape[0] < 16 or anomaly_map.shape[1] < 16: # Çok küçük haritalar için
+    # Resize small maps
+    if anomaly_map.shape[0] < 16 or anomaly_map.shape[1] < 16:
         target_h = max(64, original_image.height // 4 if hasattr(original_image, 'height') else 64)
         target_w = max(64, original_image.width // 4 if hasattr(original_image, 'width') else 64)
         if anomaly_map.size > 1 and anomaly_map.shape[0] > 0 and anomaly_map.shape[1] > 0:
             anomaly_map = cv2.resize(anomaly_map, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-        else: # Boyutlandırılamayacak kadar bozuksa varsayılan harita
+        else: # Default map if corrupted
             anomaly_map = np.zeros((target_h, target_w))
 
-    # Geçersiz değerleri temizle
+    # Clean invalid values
     anomaly_map_max = np.max(anomaly_map[np.isfinite(anomaly_map)]) if np.any(np.isfinite(anomaly_map)) else 1.0
     anomaly_map = np.nan_to_num(anomaly_map, nan=0.0, posinf=anomaly_map_max, neginf=0.0)
     
-    fig = plt.figure(figsize=(7, 7)) # Figür boyutu ayarlanabilir
+    fig = plt.figure(figsize=(7, 7))
     ax = fig.add_subplot(111)
     
-    # Orijinal görüntüyü PIL Image olarak alıp boyutlandır ve gri tonlamalı göster
+    # Handle original image
     if not hasattr(original_image, 'resize') or not hasattr(original_image, 'convert'):
-        print("Uyarı: original_image PIL.Image değil. Varsayılan görüntü kullanılacak.")
+        print("Warning: original_image is not a PIL.Image. Using default image.")
         original_image = Image.new('RGB', (256,256), color='lightgray')
 
-    # anomaly_map.shape[::-1] (width, height) sırasını verir PIL.Image.resize için
+    # Display original image in grayscale
     resized_original = original_image.resize(tuple(map(int, anomaly_map.shape[::-1])), Image.LANCZOS)
     ax.imshow(resized_original.convert('L'), cmap='gray', aspect='auto')
     
-    heatmap_cmap_anomaly = 'Reds' # Anomali için kırmızımsı renk haritası ('hot', 'YlOrRd' de olabilir)
-    heatmap_cmap_normal = 'Blues'  # Normal durum için mavimsi (isteğe bağlı)
+    # Always use EfficientAD style regardless of model
+    heatmap_cmap_anomaly = 'hot'  # EfficientAD style for all models
+    heatmap_cmap_normal = 'Blues'  # Normal case
     
     if is_anomaly:
-        log_map = np.log1p(anomaly_map) # Düşük değerli anomalileri vurgulamak için logaritmik ölçek
-        # threshold_value'nun 0 veya 1 olması durumunda log1p(threshold_value) 0 olabilir, dikkat!
-        # Eğer threshold_value çok küçükse (örn < 0.001), log_threshold'u küçük bir pozitif değerle sınırla
+        # Apply logarithmic scaling to highlight low value anomalies
+        log_map = np.log1p(anomaly_map)
+        
+        # Use safe threshold value
         safe_threshold_value = max(threshold_value, 1e-6)
         log_threshold = np.log1p(safe_threshold_value)
 
-        # Varsayılan görselleştirme parametreleri
-        alpha_clip_min = 0.35
-        alpha_clip_max = 0.85
-        alpha_norm_low_factor = 0.3 
-        alpha_norm_high_factor = 1.5
-        # vmin, vmax'ı log_map'in gerçek dağılımına göre ayarlamak daha iyi olabilir
-        # Ancak şimdilik log_threshold'a göre oranlayalım
+        # EfficientAD visualization parameters for all models
+        alpha_clip_min = 0.30
+        alpha_clip_max = 0.80
+        alpha_norm_low_factor = 0.7
+        alpha_norm_high_factor = 1.3
+        
         current_vmin = log_threshold * alpha_norm_low_factor
-        current_vmax = log_threshold * alpha_norm_high_factor
+        # Set vmax based on log_map values or threshold
+        current_vmax = max(log_threshold * alpha_norm_high_factor, np.percentile(log_map[log_map > current_vmin], 98) if np.any(log_map > current_vmin) else log_threshold * alpha_norm_high_factor)
 
-
-        if model_name == 'efficientad':
-            heatmap_cmap_anomaly = 'hot' # EfficientAD için 'hot' daha iyi olabilir
-            alpha_clip_min = 0.30  # Biraz daha erken başlasın alpha
-            alpha_clip_max = 0.80  # Maksimum opaklık biraz daha düşük olabilir
-            # EfficientAD için alpha'nın eşiğe daha yakın başlamasını ve daha hızlı artmasını sağla
-            alpha_norm_low_factor = 0.7 # Eşiğe daha yakın başla (örn: eşiğin %70'i)
-            alpha_norm_high_factor = 1.3 # Daha dar bir aralıkta maksimum alpha'ya ulaş
-            
-            current_vmin = log_threshold * alpha_norm_low_factor 
-            # vmax'ı log_map'in maksimumuna veya log_threshold'un biraz üstüne ayarlayabiliriz
-            current_vmax = max(log_threshold * alpha_norm_high_factor, np.percentile(log_map[log_map > current_vmin], 98) if np.any(log_map > current_vmin) else log_threshold * alpha_norm_high_factor)
-
-
-        # Alpha maskesi için payda (denominator) hesaplaması
+        # Calculate denominator for alpha mask
         denominator = (log_threshold * alpha_norm_high_factor) - (log_threshold * alpha_norm_low_factor)
-        if abs(denominator) < 1e-5: # Sıfıra bölme veya çok küçük paydayı engelle
+        if abs(denominator) < 1e-5:
             denominator = 1e-5 if denominator >= 0 else -1e-5
         
+        # Create alpha mask with smooth transition
         alpha_mask = np.clip(
             (log_map - (log_threshold * alpha_norm_low_factor)) / denominator,
-            0, # Önce 0-1 aralığına kliple
+            0,
             1.0
         )
-        alpha_mask = alpha_clip_min + alpha_mask * (alpha_clip_max - alpha_clip_min) # Sonra min-max aralığına ölçekle
-        alpha_mask[log_map < (log_threshold * alpha_norm_low_factor)] = 0 # İlginç aralığın altındaysa tam şeffaf yap
+        alpha_mask = alpha_clip_min + alpha_mask * (alpha_clip_max - alpha_clip_min)
+        alpha_mask[log_map < (log_threshold * alpha_norm_low_factor)] = 0
 
-
-        # vmin ve vmax'ın mantıklı sınırlar içinde olduğundan emin ol
+        # Ensure vmin and vmax are valid
         if current_vmax <= current_vmin:
-            current_vmax = current_vmin + 1e-5 # En azından küçük bir aralık bırak
+            current_vmax = current_vmin + 1e-5
 
+        # Render the heatmap
         heatmap_obj = ax.imshow(
             log_map,
             cmap=heatmap_cmap_anomaly,
@@ -379,16 +368,11 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
             aspect='auto'
         )
         
-    
         title_text = "ANOMALI TESPİT EDİLDİ"
-        title_color = '#FF4500' # Koyu turuncu-kırmızı
+        title_color = '#FF4500' # Orange-red
     
-    else: # Anomali Değil
+    else: # Normal case
         normal_display_vmax = threshold_value * 0.8
-        if model_name == 'inpformer': # INPFormer için özel ayar (önceki koddan)
-            normal_display_vmax = threshold_value * 0.64
-        
-        # Normal durumda, eğer anomaly_map'te çok düşük değerler varsa, alpha'yı azalt
         normal_alpha = 0.3 if np.max(anomaly_map) > threshold_value * 0.1 else 0.1
 
         heatmap_obj = ax.imshow(
@@ -396,25 +380,23 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
             cmap=heatmap_cmap_normal, 
             alpha=normal_alpha,    
             vmin=0,
-            vmax=max(normal_display_vmax, 1e-5), # Vmax'ın pozitif olmasını garantile
+            vmax=max(normal_display_vmax, 1e-5),
             aspect='auto'
         )
         title_text = "NORMAL (Anomali Yok)"
-        title_color = '#2E8B57' # Deniz yeşili
+        title_color = '#2E8B57' # Sea green
 
-    # Renk skalası (Colorbar)
+    # Colorbar
     cbar = plt.colorbar(heatmap_obj, ax=ax, fraction=0.046, pad=0.04)
-    cbar.ax.tick_params(colors='white') # Renk skalası yazı rengi
+    cbar.ax.tick_params(colors='white')
     plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
 
-
-    # Eşik çizgisi için renk skalasında işaretleyici
-    # (Sadece anlamlı bir eşik değeri varsa ve harita değerleri bu eşiğe yakınsa)
+    # Add threshold marker on colorbar
     if log_threshold > 1e-5 if is_anomaly else threshold_value > 1e-5:
         display_threshold_on_cbar = log_threshold if is_anomaly else threshold_value
         cbar_vmin, cbar_vmax = heatmap_obj.get_clim()
 
-        if cbar_vmin <= display_threshold_on_cbar <= cbar_vmax :
+        if cbar_vmin <= display_threshold_on_cbar <= cbar_vmax:
             cbar.ax.axhline(y=display_threshold_on_cbar, 
                             color='#00FF00', linewidth=1.5, linestyle='--')
             cbar.ax.text(0.5, display_threshold_on_cbar, 
@@ -422,7 +404,7 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
                         va='center', ha='left', color='lime', fontsize=9,
                         bbox=dict(facecolor='black', alpha=0.5, pad=1))
 
-
+    # Set title
     ax.set_title(title_text, 
                  color=title_color, 
                  fontsize=15,
@@ -431,8 +413,9 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
                  bbox=dict(facecolor='black', alpha=0.7, pad=5, edgecolor='gray'))
     ax.axis('off')
     
+    # Save figure to buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100, pad_inches=0.05, facecolor=fig.get_facecolor()) # Figür arkaplan rengi
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100, pad_inches=0.05, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     
@@ -467,17 +450,16 @@ def predict_route():
             default_thresh = 2.05  
         elif model_name == 'inpformer':
             default_thresh = 0.4
-        else: # Glass ve diğerleri için
+        else: # Glass and others
             default_thresh = model_data.get('threshold', DEFAULT_THRESHOLD * 0.7) 
             
         threshold = float(request.form.get('threshold', default_thresh))
         
         img_bytes = file.read()
         
-        # Nihai skoru, anomali durumunu ve ısı haritası için orijinal görüntüyü saklayacak değişkenler
+        # Variables to store final score, anomaly state and raw anomaly map
         final_score_to_report = 0.0
         final_is_anomaly_to_report = False
-        # Isı haritası üretimi için kullanılacak (ham) anomali haritası (numpy array)
         anomaly_map_for_visualization_np = None 
         original_pil_image_for_heatmap = None
 
@@ -499,7 +481,7 @@ def predict_route():
                 anomaly_map_for_visualization_np = combined_map_tensor.squeeze().cpu().numpy()
                 original_pil_image_for_heatmap = preprocessed_image
                 
-                # EfficientAD için skor ve anomali durumu burada belirlenir
+                # Calculate score and anomaly status
                 if anomaly_map_for_visualization_np.size == 0:
                     final_score_to_report = 0.0
                     final_is_anomaly_to_report = False
@@ -514,12 +496,11 @@ def predict_route():
                     transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
                 ])(pre_img).unsqueeze(0).to(DEVICE)
 
-                # glass_model._predict -> (image_scores_list, pixel_maps_list) döndürür
-                # Orijinal kodunuzda `_` ile image_scores atılıp, pixel_maps kullanılıyordu.
-                _, list_of_raw_pixel_maps = model_data['model']._predict(inp) 
-                raw_map_from_glass_model = list_of_raw_pixel_maps[0] # Bu GLASS modelinden gelen ham anomali haritasıdır (numpy array)
+                # Process with GLASS model
+                _, list_of_raw_pixel_maps = model_data['model']._predict(inp)
+                raw_map_from_glass_model = list_of_raw_pixel_maps[0]
                 
-                # GLASS için nihai skor ve anomali durumu BURADA belirlenir (ham harita üzerinden)
+                # Calculate score and anomaly status
                 if raw_map_from_glass_model.size == 0:
                     final_score_to_report = 0.0
                     final_is_anomaly_to_report = False
@@ -527,22 +508,23 @@ def predict_route():
                     final_score_to_report = float(np.max(raw_map_from_glass_model))
                     final_is_anomaly_to_report = final_score_to_report > threshold
 
-                # Isı haritası için ham haritayı kullanacağız.
                 anomaly_map_for_visualization_np = np.squeeze(raw_map_from_glass_model)
                 original_pil_image_for_heatmap = pre_img
                 
             elif model_name == 'inpformer':
-                pil_image_input = bytes_to_pil_image(img_bytes)
+                # Apply the same preprocessing as other models
+                preprocessed_image = preprocess_image(img_bytes, target_size=(448, 448))  # INP-Former's typical input size
                 
                 inpformer_predictor = model_data.get('predictor_object')
                 if not inpformer_predictor:
                     return jsonify({'error': 'INP-Former predictor not loaded correctly.'}), 500
                 
-                anomaly_map_tensor = inpformer_predictor.predict(pil_image_input)
+                # Use the preprocessed image instead of raw bytes
+                anomaly_map_tensor = inpformer_predictor.predict(preprocessed_image)
                 anomaly_map_for_visualization_np = anomaly_map_tensor.squeeze().cpu().numpy()
-                original_pil_image_for_heatmap = pil_image_input
+                original_pil_image_for_heatmap = preprocessed_image
 
-                # INP-Former için skor ve anomali durumu burada belirlenir
+                # Calculate score and anomaly status
                 if anomaly_map_for_visualization_np.size == 0:
                     final_score_to_report = 0.0
                     final_is_anomaly_to_report = False
@@ -550,54 +532,42 @@ def predict_route():
                     final_score_to_report = float(np.max(anomaly_map_for_visualization_np))
                     final_is_anomaly_to_report = final_score_to_report > threshold
 
-        # `anomaly_map_for_visualization_np` artık tüm modeller için ham (normalize edilmemiş) anomali haritasını içeriyor.
-        # `final_score_to_report` ve `final_is_anomaly_to_report` tüm modeller için doğru değerleri içeriyor.
-
-        # Isı haritası için görselleştirme amaçlı anomali durumu ve harita hazırlığı
-        # (Orijinal koddaki "dummy map" ve "is_anomaly = False" mantığı)
+        # Prepare heatmap visualization data
         is_anomaly_for_heatmap_display = final_is_anomaly_to_report
-        map_to_use_in_heatmap = anomaly_map_for_visualization_np.copy() # Görüntüleme için kopyada çalış
+        map_to_use_in_heatmap = anomaly_map_for_visualization_np.copy()
 
+        # Create default map if needed
         if map_to_use_in_heatmap is None or np.isnan(map_to_use_in_heatmap).all() or \
         (map_to_use_in_heatmap.size > 0 and np.max(map_to_use_in_heatmap) <= 1e-9 and np.min(map_to_use_in_heatmap) >= -1e-9) or \
         (map_to_use_in_heatmap.size == 0):
             
             ref_shape_h, ref_shape_w = IMAGE_SIZE // 4, IMAGE_SIZE // 4 
             if original_pil_image_for_heatmap is not None:
-                if hasattr(original_pil_image_for_heatmap, 'size'): # PIL Image
+                if hasattr(original_pil_image_for_heatmap, 'size'):
                     ref_shape_h, ref_shape_w = original_pil_image_for_heatmap.height //4, original_pil_image_for_heatmap.width //4
-                elif hasattr(original_pil_image_for_heatmap, 'shape'): # Numpy array
+                elif hasattr(original_pil_image_for_heatmap, 'shape'):
                     if original_pil_image_for_heatmap.ndim >=2:
                         ref_shape_h, ref_shape_w = original_pil_image_for_heatmap.shape[0] //4, original_pil_image_for_heatmap.shape[1] //4
             
-            if not hasattr(map_to_use_in_heatmap, 'shape') or map_to_use_in_heatmap.ndim == 0 or map_to_use_in_heatmap.size == 0 :
+            if not hasattr(map_to_use_in_heatmap, 'shape') or map_to_use_in_heatmap.ndim == 0 or map_to_use_in_heatmap.size == 0:
                 map_to_use_in_heatmap = np.zeros((ref_shape_h, ref_shape_w)) + (threshold * 0.1 if threshold > 0 else 0.01)
             else:
                 map_to_use_in_heatmap = np.zeros_like(map_to_use_in_heatmap) + (threshold * 0.1 if threshold > 0 else 0.01)
-            is_anomaly_for_heatmap_display = False 
-            
-        # Modele özel ayar (Orijinal koddaki gibi)
-        model_specific_adjustment = 1.0
-        if model_name == 'inpformer':
-            if map_to_use_in_heatmap.size > 0 and np.max(map_to_use_in_heatmap) > 0:
-                # Orijinal kodda `anomaly_map_np` burada normalize ediliyordu,
-                # `generate_heatmap` vmin/vmax kullandığı için bu adıma gerek olmayabilir.
-                # if np.max(map_to_use_in_heatmap) < 0.1: 
-                # map_to_use_in_heatmap = map_to_use_in_heatmap / np.max(map_to_use_in_heatmap) * threshold
-                model_specific_adjustment = 0.8 
-                
+            is_anomaly_for_heatmap_display = False
+        
+        # Generate heatmap using EfficientAD style for all models
         heatmap_buffer = generate_heatmap(
             anomaly_map=map_to_use_in_heatmap,
             original_image=original_pil_image_for_heatmap,
             is_anomaly=is_anomaly_for_heatmap_display,
-            threshold_value=threshold, # Orijinal, ayarlanmamış eşik değerini gönder
-            model_name=model_name      # Model adını gönder
+            threshold_value=threshold,
+            model_name='efficientad'  # Always use EfficientAD style
         )
         
         heatmap_b64 = base64.b64encode(heatmap_buffer.getvalue()).decode('utf-8')
         
         original_buffer = io.BytesIO()
-        if original_pil_image_for_heatmap is None: # Fallback, should not happen
+        if original_pil_image_for_heatmap is None:
             Image.new('RGB', (IMAGE_SIZE, IMAGE_SIZE)).save(original_buffer, format='PNG')
         else:
             original_pil_image_for_heatmap.save(original_buffer, format='PNG')

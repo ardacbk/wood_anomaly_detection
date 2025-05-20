@@ -1,72 +1,82 @@
 import React from 'react';
-import { Slider, Box, Typography, Paper } from '@mui/material';
+import { Slider, Box, Typography, Paper, useTheme } from '@mui/material';
+import TuneIcon from '@mui/icons-material/Tune';
 
-// Standalone fully functional ThresholdSlider component
 const ThresholdSlider = ({ value, onChange, selectedModel }) => {
-  const handleChange = (event, newValue) => {
-    if (onChange) {
-      onChange(newValue);
-    }
-  };
+  const theme = useTheme();
 
-  // Configure min, max, and step based on selected model
   const getSliderConfig = () => {
     if (selectedModel === 'inpformer') {
-      return {
-        min: 0,
-        max: 1.0,
-        step: 0.01,
-        marks: [
-          { value: 0, label: '0' },
-          { value: 0.35, label: '0.35' },
-          { value: 1.0, label: '1.0' }
-        ]
-      };
+      return { min: 0, max: 1.0, step: 0.01, color: theme.palette.success.main };
     }
-    else if (selectedModel === 'glass') {
-      return {
-        min: 0,
-        max: 1.0,
-        step: 0.01,
-        marks: [
-          { value: 0, label: '0' },
-          { value: 1.0, label: '1.0' }
-        ]
-      };
+    if (selectedModel === 'glass') {
+      return { min: 0, max: 1.0, step: 0.01, color: theme.palette.secondary.main };
     }
-     else {
-      // Default config for efficientad and other models
-      return {
-        min: 0.5,
-        max: 5.0,
-        step: 0.05,
-        marks: [
-          { value: 0.5, label: '0.5' },
-          { value: 2.05, label: '2.05' },
-          { value: 5.0, label: '5.0' }
-        ]
-      };
-    }
+    return { min: 0.5, max: 5.0, step: 0.05, color: theme.palette.primary.main };
   };
 
-  const sliderConfig = getSliderConfig();
+  const { min, max, step, color } = getSliderConfig();
 
   return (
-    <Paper elevation={1} sx={{ p: 2, height: '100%' }}>
-      <Typography variant="body1" gutterBottom>
-        Detection Threshold: <strong>{selectedModel === 'inpformer' ? value.toFixed(2) : value.toFixed(2)}</strong>
-      </Typography>
-      
-      <Box sx={{ px: 1, py: 2 }}>
+    <Paper sx={{ 
+      p: 3, 
+      borderRadius: 3,
+      width: '100%',
+      maxWidth: 600,
+      mx: 'auto',
+      boxShadow: theme.shadows[3]
+    }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+        <TuneIcon sx={{ color, fontSize: 28 }} />
+        <Typography variant="h6" fontWeight={600}>
+          Detection Sensitivity
+        </Typography>
+      </Box>
+
+      <Box sx={{ px: 2, pb: 1, position: 'relative' }}>
         <Slider
           value={value}
-          min={sliderConfig.min}
-          max={sliderConfig.max}
-          step={sliderConfig.step}
-          onChange={handleChange}
-          marks={sliderConfig.marks}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(e, val) => onChange(val)}
           valueLabelDisplay="auto"
+          valueLabelFormat={(x) => x.toFixed(2)}
+          sx={{
+            '& .MuiSlider-thumb': {
+              width: 24,
+              height: 24,
+              backgroundColor: '#fff',
+              border: `3px solid ${color}`,
+              '&:hover, &.Mui-active': { boxShadow: 'none' }
+            },
+            '& .MuiSlider-valueLabel': {
+              backgroundColor: color,
+              fontWeight: 700,
+              top: -10
+            },
+            '& .MuiSlider-track': { height: 6, backgroundColor: color },
+            '& .MuiSlider-rail': { height: 6, backgroundColor: theme.palette.grey[300] }
+          }}
         />
+        
+        {/* Current Value Display */}
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between',
+          mt: 3,
+          px: 0.5
+        }}>
+          <Typography variant="body2" color="textSecondary">
+            {min.toFixed(2)}
+          </Typography>
+          <Typography variant="body2" fontWeight={600} color={color}>
+            {value.toFixed(2)}
+          </Typography>
+          <Typography variant="body2" color="textSecondary">
+            {max.toFixed(2)}
+          </Typography>
+        </Box>
       </Box>
     </Paper>
   );
