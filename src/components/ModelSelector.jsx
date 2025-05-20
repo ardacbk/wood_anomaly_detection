@@ -33,11 +33,11 @@ const ModelSelector = ({ models, selectedModel, onChange }) => {
   const getModelDescription = (model) => {
     switch(model) {
       case 'efficientad':
-        return 'Fast and efficient anomaly detection';
+        return '';
       case 'glass':
-        return 'High precision global analysis';
+        return '';
       case 'inpformer':
-        return 'Advanced transformer-based detection';
+        return '';
       default:
         return 'AI-powered anomaly detection';
     }

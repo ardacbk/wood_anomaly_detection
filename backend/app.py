@@ -333,8 +333,17 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
         # EfficientAD visualization parameters for all models
         alpha_clip_min = 0.30
         alpha_clip_max = 0.80
-        alpha_norm_low_factor = 0.7
-        alpha_norm_high_factor = 1.3
+        
+        # GLASS model specific adjustment for heatmap visualization
+        if model_name == 'glass':
+            # Increase sensitivity for GLASS model by increasing the normalization factors
+            # This will make the heatmap visualization show only stronger anomalies
+            alpha_norm_low_factor = 0.9  # Higher value to filter out weaker signals (was 0.7)
+            alpha_norm_high_factor = 1.5  # Higher value to highlight stronger signals (was 1.3)
+        else:
+            # Regular values for other models
+            alpha_norm_low_factor = 0.7
+            alpha_norm_high_factor = 1.3
         
         current_vmin = log_threshold * alpha_norm_low_factor
         # Set vmax based on log_map values or threshold
@@ -353,6 +362,12 @@ def generate_heatmap(anomaly_map, original_image, is_anomaly, threshold_value, m
         )
         alpha_mask = alpha_clip_min + alpha_mask * (alpha_clip_max - alpha_clip_min)
         alpha_mask[log_map < (log_threshold * alpha_norm_low_factor)] = 0
+
+        # GLASS model specific adjustment to reduce noise in heatmap
+        if model_name == 'glass':
+            # Apply additional mask to filter out low intensity signals
+            noise_filter_threshold = log_threshold * 0.95  # Increased from original
+            alpha_mask[log_map < noise_filter_threshold] = 0
 
         # Ensure vmin and vmax are valid
         if current_vmax <= current_vmin:
@@ -561,7 +576,7 @@ def predict_route():
             original_image=original_pil_image_for_heatmap,
             is_anomaly=is_anomaly_for_heatmap_display,
             threshold_value=threshold,
-            model_name='efficientad'  # Always use EfficientAD style
+            model_name=model_name  # Always use EfficientAD style
         )
         
         heatmap_b64 = base64.b64encode(heatmap_buffer.getvalue()).decode('utf-8')
